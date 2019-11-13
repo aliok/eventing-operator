@@ -46,6 +46,10 @@ EOF
 Please refer to [Building the Operator Image](#building-the-operator-image) to
 build your own image.
 
+## Prerequisites
+
+* [`ko`](https://github.com/google/ko)
+
 ## The `Eventing` Custom Resource
 
 The installation of Knative Eventing is triggered by the creation of a
@@ -58,8 +62,9 @@ or removal of the knative eventing resources.
 The following are all equivalent:
 
 ```
-kubectl get eventings.operator.knative.dev -oyaml
-kubectl get eventing -oyaml
+kubectl get eventings.operator.knative.dev
+kubectl get eventing
+kubectl get ke
 ```
 
 To uninstall Knative Eventing, simply delete the `Eventing` resource.
