@@ -1,7 +1,7 @@
 apiVersion: operators.coreos.com/v1alpha1
 kind: ClusterServiceVersion
 metadata:
-  name: knative-eventing-operator.v0.10.0
+  name: knative-eventing-operator.v0.10.1
   namespace: placeholder
   annotations:
     alm-examples: >-
@@ -14,8 +14,8 @@ metadata:
       primitives to enable late-binding event sources and event
       consumers.
     containerImage: >-
-      gcr.io/knative-releases/knative.dev/eventing-operator/cmd/manager@sha256:eb8b4b71c338d0e575430243fdced6344149fd0490d4a4c756e80dfb9d0c182c
-    support: Red Hat
+      docker.io/aliok/manager-f1ecf4e236a455a91a2eb955def6b11b:0.10.1
+    support: The Knative Authors
     capabilities: Basic Install
     repository: 'https://github.com/knative/eventing-operator'
     createdAt: '2019-11-13T10:00:00Z'
@@ -40,7 +40,7 @@ spec:
     [Knative eventing](https://www.knative.dev/docs/eventing/) or
     [Knative docs](https://www.knative.dev/docs/) to learn about Knative.
   maturity: alpha
-  version: 0.10.0
+  version: 0.10.1
   replaces: ''
   minKubeVersion: ''
   keywords:
@@ -50,7 +50,7 @@ spec:
     - kafka
   maintainers:
     - name: The Knative Authors
-      email: knative@redhat.com
+      email: knative-dev@googlegroups.com
   provider:
     name: The Knative Authors
   labels: {}
@@ -186,7 +186,7 @@ spec:
                       - name: METRICS_DOMAIN
                         value: knative.dev/operator-operator
                     image: >-
-                      gcr.io/knative-releases/knative.dev/eventing-operator/cmd/manager:v0.10.0
+                      docker.io/aliok/manager-f1ecf4e236a455a91a2eb955def6b11b:0.10.1
                     imagePullPolicy: Always
                     name: knative-eventing-operator
                     resources: {}
