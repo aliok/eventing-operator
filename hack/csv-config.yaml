@@ -1,0 +1,6 @@
+operator-path: config/operator.yaml
+role-paths:
+  - config/role.yaml
+crd-cr-paths:
+  - config/300-eventing-v1alpha1-knativeeventing-crd.yaml
+operator-name: knative-eventing-operator

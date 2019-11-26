@@ -101,3 +101,9 @@ output of the above `ko publish` command.
 The image should match what's in [config/operator.yaml](config/operator.yaml)
 and the `$VERSION` should match [version.go](version/version.go) and correspond
 to the contents of [config/](config/).
+
+
+## OLM
+
+TODO
+Requires at least operator-sdk v 0.12 (otherwise package.yaml is not updated properly)
