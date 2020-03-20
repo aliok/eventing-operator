@@ -1,4 +1,4 @@
-FROM rhel8/go-toolset:1.13.4 AS builder
+FROM openshift/origin-release:golang-1.13 AS builder
 WORKDIR ${GOPATH}/src/knative.dev/eventing-operator
 COPY . .
 ENV GOFLAGS="-mod=vendor"
