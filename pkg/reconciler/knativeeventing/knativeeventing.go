@@ -45,9 +45,11 @@ const (
 )
 
 var (
-	platform    common.Platforms
-	role        mf.Predicate = mf.Any(mf.ByKind("ClusterRole"), mf.ByKind("Role"))
-	rolebinding mf.Predicate = mf.Any(mf.ByKind("ClusterRoleBinding"), mf.ByKind("RoleBinding"))
+	platform               common.Platforms
+	role                   mf.Predicate = mf.Any(mf.ByKind("ClusterRole"), mf.ByKind("Role"))
+	rolebinding            mf.Predicate = mf.Any(mf.ByKind("ClusterRoleBinding"), mf.ByKind("RoleBinding"))
+	podSpecable            mf.Predicate = mf.Any(mf.ByKind("Deployment"), mf.ByKind("StatefulSet"), mf.ByKind("DaemonSet"))
+	defaultBrokerConfigMap mf.Predicate = mf.None(mf.All(mf.ByKind("ConfigMap"), mf.ByName("config-br-defaults")))
 )
 
 // Reconciler implements controller.Reconciler for Knativeeventing resources.
@@ -56,6 +58,7 @@ type Reconciler struct {
 	// Listers index properties about resources
 	knativeEventingLister listers.KnativeEventingLister
 	config                mf.Manifest
+	defaultBrokerConfigs  map[string]mf.Manifest
 	eventings             sets.String
 }
 
@@ -119,26 +122,64 @@ func (r *Reconciler) reconcile(ctx context.Context, ke *eventingv1alpha1.Knative
 	reqLogger := r.Logger.With(zap.String("Request.Namespace", ke.Namespace)).With("Request.Name", ke.Name)
 	reqLogger.Infow("Reconciling KnativeEventing", "status", ke.Status)
 
-	stages := []func(*mf.Manifest, *eventingv1alpha1.KnativeEventing) error{
+	preStages := []func(*mf.Manifest, *eventingv1alpha1.KnativeEventing) error{
 		r.ensureFinalizer,
 		r.initStatus,
-		r.install,
+		r.installWithoutPodSpecables,
+	}
+
+	postStages := []func(*mf.Manifest, *eventingv1alpha1.KnativeEventing) error{
+		r.installPodSpecables,
 		r.checkDeployments,
 		r.deleteObsoleteResources,
 	}
 
-	manifest, err := r.transform(ke)
+	manifest, err := r.transform(r.config, ke)
 	if err != nil {
 		ke.Status.MarkEventingFailed("Manifest Installation", err.Error())
 		return err
 	}
 
+	// delete the default broker config in main manifest, as we are going to apply it separately
+	manifest = manifest.Filter(defaultBrokerConfigMap)
+
+	defaultBrokerClass := ke.Spec.DefaultBrokerClass
+	if defaultBrokerClass == "" {
+		defaultBrokerClass = ChannelBasedBrokerClass
+	}
+	defaultBrokerConfig := r.defaultBrokerConfigs[defaultBrokerClass]
+	defaultBrokerConfigManifest, err := r.transform(defaultBrokerConfig, ke)
+	if err != nil {
+		ke.Status.MarkEventingFailed("Manifest Installation", err.Error())
+		return err
+	}
+
+	// prestages
+	if err := applyStages(preStages, manifest, ke); err != nil {
+		return err
+	}
+	if err := applyStages(preStages, defaultBrokerConfigManifest, ke); err != nil {
+		return err
+	}
+
+	// poststages
+	if err := applyStages(postStages, manifest, ke); err != nil {
+		return err
+	}
+	if err := applyStages(postStages, defaultBrokerConfigManifest, ke); err != nil {
+		return err
+	}
+
+	reqLogger.Infow("Reconcile stages complete", "status", ke.Status)
+	return nil
+}
+
+func applyStages(stages []func(*mf.Manifest, *eventingv1alpha1.KnativeEventing) error, manifest mf.Manifest, ke *eventingv1alpha1.KnativeEventing) error {
 	for _, stage := range stages {
 		if err := stage(&manifest, ke); err != nil {
 			return err
 		}
 	}
-	reqLogger.Infow("Reconcile stages complete", "status", ke.Status)
 	return nil
 }
 
@@ -153,17 +194,17 @@ func (r *Reconciler) initStatus(_ *mf.Manifest, ke *eventingv1alpha1.KnativeEven
 	return nil
 }
 
-func (r *Reconciler) transform(instance *eventingv1alpha1.KnativeEventing) (mf.Manifest, error) {
+func (r *Reconciler) transform(manifest mf.Manifest, instance *eventingv1alpha1.KnativeEventing) (mf.Manifest, error) {
 	r.Logger.Debug("Transforming manifest")
 	transforms, err := platform.Transformers(r.KubeClientSet, instance, r.Logger)
 	if err != nil {
 		return mf.Manifest{}, err
 	}
-	return r.config.Transform(transforms...)
+	return manifest.Transform(transforms...)
 }
 
-func (r *Reconciler) install(manifest *mf.Manifest, ke *eventingv1alpha1.KnativeEventing) error {
-	r.Logger.Debug("Installing manifest")
+func (r *Reconciler) installWithoutPodSpecables(manifest *mf.Manifest, ke *eventingv1alpha1.KnativeEventing) error {
+	r.Logger.Debug("Installing manifest without podSpecables")
 	defer r.updateStatus(ke)
 	// The Operator needs a higher level of permissions if it 'bind's non-existent roles.
 	// To avoid this, we strictly order the manifest application as (Cluster)Roles, then
@@ -176,7 +217,18 @@ func (r *Reconciler) install(manifest *mf.Manifest, ke *eventingv1alpha1.Knative
 		ke.Status.MarkEventingFailed("Manifest Installation", err.Error())
 		return err
 	}
-	if err := manifest.Filter(mf.None(mf.Any(role, rolebinding))).Apply(); err != nil {
+	if err := manifest.Filter(mf.None(mf.Any(role, rolebinding, podSpecable))).Apply(); err != nil {
+		ke.Status.MarkEventingFailed("Manifest Installation", err.Error())
+		return err
+	}
+	return nil
+}
+
+func (r *Reconciler) installPodSpecables(manifest *mf.Manifest, ke *eventingv1alpha1.KnativeEventing) error {
+	r.Logger.Debug("Installing manifest with podSpecables")
+	defer r.updateStatus(ke)
+	// Create the things that creates containers deployments at last
+	if err := manifest.Filter(podSpecable).Apply(); err != nil {
 		ke.Status.MarkEventingFailed("Manifest Installation", err.Error())
 		return err
 	}
@@ -257,6 +309,13 @@ func (r *Reconciler) delete(instance *eventingv1alpha1.KnativeEventing) error {
 		if err := r.config.Filter(mf.NoCRDs, mf.None(RBAC)).Delete(); err != nil {
 			r.Logger.Warn(err, "Error deleting resources")
 			return err
+		}
+		// Delete default broker configs
+		for _, defaultBrokerConfig := range r.defaultBrokerConfigs {
+			if err := defaultBrokerConfig.Delete(); err != nil {
+				r.Logger.Warn(err, "Error deleting broker defaulting config resources")
+				return err
+			}
 		}
 		// Delete Roles last, as they may be useful for human operators to clean up.
 		if err := r.config.Filter(RBAC).Delete(); err != nil {
